@@ -1,65 +1,91 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+from fastapi import FastAPI, HTTPException, Depends
+from sqlalchemy.orm import Session
 
-class TaskCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
-    completed: bool = False
+from .database import get_db, Base, engine
+from . import db_models
+from .model import TaskCreate, TaskUpdate, TaskResponse
 
-class Task(BaseModel):
-    id: int
-    title: str
-    description: Optional[str] = None
-    completed: bool = False
-    created_at: datetime
-    updated_at: datetime
 
-# in-memory store
-tasks = {}
-next_id = 1
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception:
+        pass
+    yield
+
+
+# Best-effort table creation at import so TestClient without
+# lifespan context still works when DB is reachable.
+# Never crash import if DB is down.
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception:
+    pass
+
+
+app = FastAPI(title="Task API - Phase 2 DB", lifespan=lifespan)
+
 
 @app.get("/health")
 def health():
     return {"status": "healthy"}
 
-@app.post("/tasks", status_code=201)
-def create_task(data: TaskCreate):
-    global next_id
-    now = datetime.now()
-    task = Task(id=next_id, title=data.title, description=data.description, completed=data.completed, created_at=now, updated_at=now)
-    tasks[next_id] = task
-    next_id += 1
+
+@app.post("/tasks", response_model=TaskResponse, status_code=201)
+def create_task(data: TaskCreate, db: Session = Depends(get_db)):
+    new_task = db_models.Task(
+        title=data.title,
+        description=data.description,
+        completed=data.completed,
+    )
+    db.add(new_task)
+    db.commit()
+    db.refresh(new_task)
+    return new_task
+
+
+@app.get("/tasks", response_model=list[TaskResponse])
+def list_tasks(db: Session = Depends(get_db)):
+    return db.query(db_models.Task).all()
+
+
+@app.get("/tasks/{task_id}", response_model=TaskResponse)
+def get_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(db_models.Task).filter(db_models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
     return task
 
-@app.get("/tasks")
-def get_all_tasks():
-    return list(tasks.values())
 
-@app.get("/tasks/{task_id}")
-def get_one_task(task_id: int):
-    if task_id not in tasks:
+@app.put("/tasks/{task_id}", response_model=TaskResponse)
+def update_task(task_id: int, data: TaskUpdate, db: Session = Depends(get_db)):
+    task = db.query(db_models.Task).filter(db_models.Task.id == task_id).first()
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return tasks[task_id]
 
-@app.put("/tasks/{task_id}")
-def update_task(task_id: int, data: TaskCreate):
-    if task_id not in tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
-    t = tasks[task_id]
-    t.title = data.title
-    t.description = data.description
-    t.completed = data.completed
-    t.updated_at = datetime.now()
-    tasks[task_id] = t
-    return t
+    if data.title is not None:
+        task.title = data.title
+    if data.description is not None:
+        task.description = data.description
+    if data.completed is not None:
+        task.completed = data.completed
+
+    task.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(task)
+    return task
+
 
 @app.delete("/tasks/{task_id}")
-def delete_task(task_id: int):
-    if task_id not in tasks:
+def delete_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(db_models.Task).filter(db_models.Task.id == task_id).first()
+    if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    del tasks[task_id]
+
+    db.delete(task)
+    db.commit()
     return {"message": "Task deleted"}

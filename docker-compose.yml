@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:16
+    container_name: task_api_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: task_api
+    ports:
+      # Host 5432 is occupied by the local Windows PostgreSQL install,
+      # so the container is exposed on 5433 to avoid the clash.
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
