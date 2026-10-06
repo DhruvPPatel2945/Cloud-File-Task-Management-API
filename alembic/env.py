@@ -12,7 +12,7 @@ from alembic import context
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from app.database import Base, DATABASE_URL
-from app.db_models import Task  # noqa: F401
+from app.db_models import Task,User # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

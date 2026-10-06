@@ -1,34 +1,21 @@
-from datetime import datetime, timezone
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
 
-from .database import get_db, Base, engine
+from .database import get_db
 from . import db_models
 from .model import TaskCreate, TaskUpdate, TaskResponse
+from .auth import router as auth_router
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception:
-        pass
-    yield
 
 
 # Best-effort table creation at import so TestClient without
 # lifespan context still works when DB is reachable.
 # Never crash import if DB is down.
-try:
-    Base.metadata.create_all(bind=engine)
-except Exception:
-    pass
 
 
-app = FastAPI(title="Task API - Phase 2 DB", lifespan=lifespan)
 
+app = FastAPI(title="Task API - Phase 3 Authentication")
+app.include_router(auth_router)
 
 @app.get("/health")
 def health():
