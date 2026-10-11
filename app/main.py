@@ -1,3 +1,11 @@
+import logging
+import time
+
+from .logging_config import configure_logging
+
+configure_logging()
+logger = logging.getLogger("task_api")
+
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -23,6 +31,41 @@ app.include_router(auth_router)
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    started_at = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        logger.error(
+            "request_failed",
+            extra={
+                "fields": {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "error_type": type(exc).__name__,
+                }
+            },
+        )
+        raise
+
+    elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
+
+    logger.info(
+        "request_completed",
+        extra={
+            "fields": {
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": elapsed_ms,
+            }
+        },
+    )
+
+    return response
 
 def _get_owned_task(
     task_id: int,
