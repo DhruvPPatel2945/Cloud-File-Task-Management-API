@@ -1,15 +1,17 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    ForeignKey,
     Integer,
     String,
     UniqueConstraint,
 )
-from datetime import datetime, timezone
+from sqlalchemy.orm import relationship
 
-from .database import Base,engine
-
+from .database import Base
 
 
 class Task(Base):
@@ -29,6 +31,14 @@ class Task(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", name="fk_tasks_user_id_users"),
+        nullable=False,
+        index=True,
+    )
+    owner = relationship("User", back_populates="tasks")
+
 
 class User(Base):
     __tablename__ = "users"
@@ -44,3 +54,5 @@ class User(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+
+    tasks = relationship("Task", back_populates="owner")

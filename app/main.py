@@ -1,11 +1,14 @@
-from fastapi import FastAPI, HTTPException, Depends
+from datetime import datetime, timezone
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.orm import Session
 
-from .database import get_db
 from . import db_models
-from .model import TaskCreate, TaskUpdate, TaskResponse
 from .auth import router as auth_router
-
+from .database import get_db
+from .model import TaskCreate, TaskResponse, TaskUpdate
+from .security import get_current_user
 
 
 # Best-effort table creation at import so TestClient without
@@ -21,13 +24,40 @@ app.include_router(auth_router)
 def health():
     return {"status": "healthy"}
 
+def _get_owned_task(
+    task_id: int,
+    user_id: int,
+    db: Session,
+) -> db_models.Task:
+    task = (
+        db.query(db_models.Task)
+        .filter(
+            db_models.Task.id == task_id,
+            db_models.Task.user_id == user_id,
+        )
+        .first()
+    )
+
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return task
+
 
 @app.post("/tasks", response_model=TaskResponse, status_code=201)
-def create_task(data: TaskCreate, db: Session = Depends(get_db)):
+def create_task(
+    data: TaskCreate,
+    current_user: Annotated[
+        db_models.User,
+        Depends(get_current_user),
+    ],
+    db: Session = Depends(get_db),
+):
     new_task = db_models.Task(
         title=data.title,
         description=data.description,
         completed=data.completed,
+        user_id=current_user.id,
     )
     db.add(new_task)
     db.commit()
@@ -36,23 +66,43 @@ def create_task(data: TaskCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/tasks", response_model=list[TaskResponse])
-def list_tasks(db: Session = Depends(get_db)):
-    return db.query(db_models.Task).all()
+def list_tasks(
+    current_user: Annotated[
+        db_models.User,
+        Depends(get_current_user),
+    ],
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(db_models.Task)
+        .filter(db_models.Task.user_id == current_user.id)
+        .all()
+    )
 
 
 @app.get("/tasks/{task_id}", response_model=TaskResponse)
-def get_task(task_id: int, db: Session = Depends(get_db)):
-    task = db.query(db_models.Task).filter(db_models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return task
+def get_task(
+    task_id: int,
+    current_user: Annotated[
+        db_models.User,
+        Depends(get_current_user),
+    ],
+    db: Session = Depends(get_db),
+):
+    return _get_owned_task(task_id, current_user.id, db)
 
 
 @app.put("/tasks/{task_id}", response_model=TaskResponse)
-def update_task(task_id: int, data: TaskUpdate, db: Session = Depends(get_db)):
-    task = db.query(db_models.Task).filter(db_models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+def update_task(
+    task_id: int,
+    data: TaskUpdate,
+    current_user: Annotated[
+        db_models.User,
+        Depends(get_current_user),
+    ],
+    db: Session = Depends(get_db),
+):
+    task = _get_owned_task(task_id, current_user.id, db)
 
     if data.title is not None:
         task.title = data.title
@@ -68,10 +118,15 @@ def update_task(task_id: int, data: TaskUpdate, db: Session = Depends(get_db)):
 
 
 @app.delete("/tasks/{task_id}")
-def delete_task(task_id: int, db: Session = Depends(get_db)):
-    task = db.query(db_models.Task).filter(db_models.Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+def delete_task(
+    task_id: int,
+    current_user: Annotated[
+        db_models.User,
+        Depends(get_current_user),
+    ],
+    db: Session = Depends(get_db),
+):
+    task = _get_owned_task(task_id, current_user.id, db)
 
     db.delete(task)
     db.commit()
